@@ -22,12 +22,29 @@ enum AppTab: Hashable {
     case calendar, schedule, search, settings
 }
 
+// Day / Week / Month modes for the Calendar tab
+enum CalendarMode: String, CaseIterable, Identifiable {
+    case day = "Day"
+    case week = "Week"
+    case month = "Month"
+    var id: String { rawValue }
+}
+
+extension Color {
+    // A soft random colour. Low opacity keeps text readable in light and dark mode.
+    static func randomPastel() -> Color {
+        Color(hue: .random(in: 0...1), saturation: .random(in: 0.5...0.8), brightness: 0.95)
+            .opacity(0.3)
+    }
+}
+
 // MARK: - Navigation (four tabs)
 
 struct ContentView: View {
     @State private var darkMode = false
     @State private var tab: AppTab = .calendar
     @State private var selectedDate = Date()   // shared by Calendar and Schedule
+    @State private var gridColor = Color.randomPastel()   // calendar grid background
     @State private var events = [
         Event(name: "Maths Test",  location: "Room 12",   date: Date(), tag: 0),
         Event(name: "Football",    location: "Field",     date: Date(), tag: 0),
@@ -38,7 +55,7 @@ struct ContentView: View {
 
     var body: some View {
         TabView(selection: $tab) {
-            CalendarView(selectedDate: $selectedDate, events: events)
+            CalendarView(selectedDate: $selectedDate, events: events, gridColor: gridColor)
                 .tabItem { Label("Calendar", systemImage: "calendar") }
                 .tag(AppTab.calendar)
             ScheduleView(events: $events, selectedDate: selectedDate)
@@ -52,6 +69,11 @@ struct ContentView: View {
                 .tag(AppTab.settings)
         }
         .preferredColorScheme(darkMode ? .dark : .light)
+        // Every time the tab changes, pick a new calendar grid colour
+        // (iOS 17+. On iOS 16 use: .onChange(of: tab) { _ in ... })
+        .onChange(of: tab) {
+            withAnimation { gridColor = .randomPastel() }
+        }
     }
 }
 
@@ -77,14 +99,16 @@ struct Screen<Content: View>: View {
     }
 }
 
-// Rounded card
+// Rounded card (optional background colour)
 struct Card<Content: View>: View {
+    var background: Color = .clear
     @ViewBuilder let content: Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) { content }
             .padding()
             .frame(maxWidth: .infinity, alignment: .leading)
+            .background(background)
             .cornerRadius(16)
             .shadow(color: .black.opacity(0.1), radius: 4, y: 2)
     }
@@ -95,39 +119,170 @@ struct Card<Content: View>: View {
 struct CalendarView: View {
     @Binding var selectedDate: Date
     let events: [Event]
+    let gridColor: Color   // changes whenever the tab changes
+    @State private var mode: CalendarMode = .month
 
-    // Events that fall on the selected day
-    var dayEvents: [Event] {
-        events.filter { Calendar.current.isDate($0.date, inSameDayAs: selectedDate) }
+    private var cal: Calendar { Calendar.current }
+
+    // Events on a given day, earliest first
+    private func eventsOn(_ day: Date) -> [Event] {
+        events
+            .filter { cal.isDate($0.date, inSameDayAs: day) }
+            .sorted { $0.date < $1.date }
+    }
+
+    // The 7 days of the selected date's week (keeps the selected time of day)
+    private var weekDays: [Date] {
+        let offset = (cal.component(.weekday, from: selectedDate) - cal.firstWeekday + 7) % 7
+        return (0..<7).compactMap {
+            cal.date(byAdding: .day, value: $0 - offset, to: selectedDate)
+        }
+    }
+
+    private func shift(days: Int) {
+        if let d = cal.date(byAdding: .day, value: days, to: selectedDate) {
+            selectedDate = d
+        }
     }
 
     var body: some View {
         Screen(title: "Calendar") {
-            Card {
-                DatePicker("Date", selection: $selectedDate, displayedComponents: .date)
-                    .datePickerStyle(.graphical)
-                Divider()
-                HStack {
-                    Text("Time")
-                    Spacer()
-                    DatePicker("Time", selection: $selectedDate, displayedComponents: .hourAndMinute)
-                        .labelsHidden()
+            Picker("View", selection: $mode) {
+                ForEach(CalendarMode.allCases) { m in
+                    Text(m.rawValue).tag(m)
                 }
             }
+            .pickerStyle(.segmented)
 
-            Card {
-                Text("Events today").font(.callout)
-                if dayEvents.isEmpty {
-                    Text("None").foregroundColor(.gray)
+            ScrollView {
+                VStack(spacing: 16) {
+                    switch mode {
+                    case .day:   dayView
+                    case .week:  weekView
+                    case .month: monthView
+                    }
                 }
-                ForEach(dayEvents) { event in
-                    HStack {
-                        Text("\(event.name) - \(event.location)")
-                        Spacer()
-                        Text(event.date, style: .time)
+                .padding(.bottom, 8)
+            }
+        }
+    }
+
+    // MARK: Month
+
+    @ViewBuilder private var monthView: some View {
+        Card(background: gridColor) {
+            DatePicker("Date", selection: $selectedDate, displayedComponents: .date)
+                .datePickerStyle(.graphical)
+            Divider()
+            HStack {
+                Text("Time")
+                Spacer()
+                DatePicker("Time", selection: $selectedDate, displayedComponents: .hourAndMinute)
+                    .labelsHidden()
+            }
+        }
+
+        Card {
+            Text("Events today").font(.callout)
+            eventList(for: eventsOn(selectedDate))
+        }
+    }
+
+    // MARK: Week
+
+    @ViewBuilder private var weekView: some View {
+        Card(background: gridColor) {
+            HStack {
+                Button { shift(days: -7) } label: { Image(systemName: "chevron.left") }
+                Spacer()
+                if let first = weekDays.first, let last = weekDays.last {
+                    Text("\(first.formatted(.dateTime.day().month())) - \(last.formatted(.dateTime.day().month()))")
+                        .font(.headline)
+                }
+                Spacer()
+                Button { shift(days: 7) } label: { Image(systemName: "chevron.right") }
+            }
+
+            HStack(spacing: 4) {
+                ForEach(weekDays, id: \.self) { day in
+                    let isSelected = cal.isDate(day, inSameDayAs: selectedDate)
+                    Button {
+                        selectedDate = day
+                    } label: {
+                        VStack(spacing: 4) {
+                            Text(day.formatted(.dateTime.weekday(.abbreviated)))
+                                .font(.caption)
+                            Text(day.formatted(.dateTime.day()))
+                                .font(.headline)
+                            Circle()
+                                .frame(width: 5, height: 5)
+                                .opacity(eventsOn(day).isEmpty ? 0 : 1)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .foregroundColor(isSelected ? .white : .primary)
+                        .background(isSelected ? Color.accentColor : Color.clear)
+                        .cornerRadius(10)
                     }
                 }
             }
+        }
+
+        Card {
+            Text("Events this week").font(.callout)
+            if weekDays.allSatisfy({ eventsOn($0).isEmpty }) {
+                Text("None").foregroundColor(.gray)
+            }
+            ForEach(weekDays, id: \.self) { day in
+                let list = eventsOn(day)
+                if !list.isEmpty {
+                    Text(day.formatted(.dateTime.weekday(.wide).day().month()))
+                        .font(.subheadline)
+                        .bold()
+                    ForEach(list) { event in
+                        eventRow(event)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: Day
+
+    @ViewBuilder private var dayView: some View {
+        Card(background: gridColor) {
+            HStack {
+                Button { shift(days: -1) } label: { Image(systemName: "chevron.left") }
+                Spacer()
+                Text(selectedDate.formatted(date: .complete, time: .omitted))
+                    .font(.headline)
+                Spacer()
+                Button { shift(days: 1) } label: { Image(systemName: "chevron.right") }
+            }
+        }
+
+        Card {
+            Text("Events").font(.callout)
+            eventList(for: eventsOn(selectedDate))
+        }
+    }
+
+    // MARK: Helpers
+
+    @ViewBuilder private func eventList(for list: [Event]) -> some View {
+        if list.isEmpty {
+            Text("None").foregroundColor(.gray)
+        }
+        ForEach(list) { event in
+            eventRow(event)
+        }
+    }
+
+    private func eventRow(_ event: Event) -> some View {
+        HStack {
+            Text("\(event.name) - \(event.location)")
+            Spacer()
+            Text(event.date, style: .time)
         }
     }
 }
