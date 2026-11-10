@@ -64,7 +64,6 @@ struct Screen<Content: View>: View {
 
     var body: some View {
         ZStack {
-            Color(.systemGray6).ignoresSafeArea()
             VStack(spacing: 16) {
                 Text(title)
                     .font(.largeTitle)
@@ -86,7 +85,6 @@ struct Card<Content: View>: View {
         VStack(alignment: .leading, spacing: 10) { content }
             .padding()
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(.systemBackground))
             .cornerRadius(16)
             .shadow(color: .black.opacity(0.1), radius: 4, y: 2)
     }
