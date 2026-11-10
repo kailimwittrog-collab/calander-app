@@ -29,11 +29,10 @@ struct ContentView: View {
     @State private var tab: AppTab = .calendar
     @State private var selectedDate = Date()   // shared by Calendar and Schedule
     @State private var events = [
-        Event(name: "Maths Test",  location: "Room 12",   date: Date(), tag: 0),
-        Event(name: "Football",    location: "Field",     date: Date(), tag: 0),
+        Event(name: "Feetball :drool emoji:",    location: "Field",     date: Date(), tag: 0),
         Event(name: "Art Project", location: "Art Room",  date: Date(), tag: 1),
-        Event(name: "Choir",       location: "Hall",      date: Calendar.current.date(byAdding: .day, value: 1, to: Date())!, tag: 1),
-        Event(name: "Science Fair", location: "Lab",      date: Calendar.current.date(byAdding: .day, value: 2, to: Date())!, tag: 2)
+        Event(name: "Music or smt idk",       location: "Hall",      date: Calendar.current.date(byAdding: .day, value: 1, to: Date())!, tag: 1),
+        Event(name: "Science lesson yums", location: "Lab",      date: Calendar.current.date(byAdding: .day, value: 2, to: Date())!, tag: 2)
     ]
 
     var body: some View {
