@@ -17,10 +17,16 @@ struct Event: Identifiable {
     var tag: Int   // 0 to 3 = Tag 1 to Tag 4
 }
 
-// MARK: - Navigation (three tabs)
+// One case per tab, so other screens (like Search) can switch tabs
+enum AppTab: Hashable {
+    case calendar, schedule, search, settings
+}
+
+// MARK: - Navigation (four tabs)
 
 struct ContentView: View {
     @State private var darkMode = false
+    @State private var tab: AppTab = .calendar
     @State private var selectedDate = Date()   // shared by Calendar and Schedule
     @State private var events = [
         Event(name: "Maths Test",  location: "Room 12",   date: Date(), tag: 0),
@@ -31,13 +37,19 @@ struct ContentView: View {
     ]
 
     var body: some View {
-        TabView {
+        TabView(selection: $tab) {
             CalendarView(selectedDate: $selectedDate, events: events)
                 .tabItem { Label("Calendar", systemImage: "calendar") }
+                .tag(AppTab.calendar)
             ScheduleView(events: $events, selectedDate: selectedDate)
                 .tabItem { Label("Schedule", systemImage: "checklist") }
+                .tag(AppTab.schedule)
+            SearchView(events: events, tab: $tab, selectedDate: $selectedDate)
+                .tabItem { Label("Search", systemImage: "magnifyingglass") }
+                .tag(AppTab.search)
             SettingsView(darkMode: $darkMode)
                 .tabItem { Label("Settings", systemImage: "gearshape") }
+                .tag(AppTab.settings)
         }
         .preferredColorScheme(darkMode ? .dark : .light)
     }
@@ -176,11 +188,122 @@ struct ScheduleView: View {
     }
 }
 
+// MARK: - Search
+
+struct SearchResult: Identifiable {
+    let id = UUID()
+    let title: String
+    let subtitle: String
+    let icon: String
+    let destination: AppTab
+    var date: Date? = nil   // if set, the Calendar jumps to this day
+}
+
+struct SearchView: View {
+    let events: [Event]
+    @Binding var tab: AppTab
+    @Binding var selectedDate: Date
+    @State private var query = ""
+
+    // Things that aren't events but can still be searched for
+    private let appItems: [SearchResult] = [
+        SearchResult(title: "Calendar", subtitle: "Tab", icon: "calendar", destination: .calendar),
+        SearchResult(title: "Schedule", subtitle: "Tab", icon: "checklist", destination: .schedule),
+        SearchResult(title: "Settings", subtitle: "Tab", icon: "gearshape", destination: .settings),
+        SearchResult(title: "Account", subtitle: "Settings", icon: "person.crop.circle", destination: .settings),
+        SearchResult(title: "Dark Mode", subtitle: "Settings", icon: "moon", destination: .settings),
+        SearchResult(title: "Push Notifications", subtitle: "Settings", icon: "bell", destination: .settings),
+        SearchResult(title: "Leave a review", subtitle: "Settings", icon: "star", destination: .settings)
+    ]
+
+    var results: [SearchResult] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        if q.isEmpty { return [] }
+
+        let eventResults = events
+            .filter {
+                $0.name.lowercased().contains(q)
+                || $0.location.lowercased().contains(q)
+                || "tag \($0.tag + 1)".contains(q)
+            }
+            .map {
+                SearchResult(
+                    title: $0.name,
+                    subtitle: "\($0.location) · Tag \($0.tag + 1) · \($0.date.formatted(date: .abbreviated, time: .shortened))",
+                    icon: "calendar.badge.clock",
+                    destination: .calendar,
+                    date: $0.date
+                )
+            }
+
+        let itemResults = appItems.filter {
+            $0.title.lowercased().contains(q) || $0.subtitle.lowercased().contains(q)
+        }
+
+        return eventResults + itemResults
+    }
+
+    var body: some View {
+        Screen(title: "Search") {
+            Card {
+                HStack {
+                    Image(systemName: "magnifyingglass").foregroundColor(.gray)
+                    TextField("Search events, settings...", text: $query)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                    if !query.isEmpty {
+                        Button {
+                            query = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill").foregroundColor(.gray)
+                        }
+                    }
+                }
+            }
+
+            if query.isEmpty {
+                Text("Type to search events, locations and settings")
+                    .foregroundColor(.gray)
+            } else if results.isEmpty {
+                Text("No results").foregroundColor(.gray)
+            } else {
+                ScrollView {
+                    VStack(spacing: 12) {
+                        ForEach(results) { result in
+                            Button {
+                                if let date = result.date { selectedDate = date }
+                                tab = result.destination
+                            } label: {
+                                Card {
+                                    HStack {
+                                        Image(systemName: result.icon)
+                                            .frame(width: 28)
+                                        VStack(alignment: .leading) {
+                                            Text(result.title).foregroundColor(.primary)
+                                            Text(result.subtitle)
+                                                .font(.caption)
+                                                .foregroundColor(.gray)
+                                        }
+                                        Spacer()
+                                        Image(systemName: "chevron.right").foregroundColor(.gray)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Settings
 
 struct SettingsView: View {
     @Binding var darkMode: Bool
     @State private var pushOn = true
+    @State private var buttonColor = Color.blue
+    @State private var showFeedback = false
 
     var body: some View {
         NavigationStack {
@@ -200,7 +323,81 @@ struct SettingsView: View {
                     Divider()
                     Toggle("Push Notifications", isOn: $pushOn)
                 }
+
+                // Changes its own colour every time it's tapped
+                Button {
+                    withAnimation {
+                        buttonColor = Color(
+                            hue: .random(in: 0...1),
+                            saturation: .random(in: 0.6...0.9),
+                            brightness: .random(in: 0.7...0.95)
+                        )
+                    }
+                } label: {
+                    Text("Change background colour")
+                        .bold()
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(buttonColor)
+                        .cornerRadius(12)
+                }
+
+                Button {
+                    showFeedback = true
+                } label: {
+                    Label("Leave a review", systemImage: "star.bubble")
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color(.systemBackground))
+                        .cornerRadius(12)
+                }
             }
+        }
+        .sheet(isPresented: $showFeedback) {
+            FeedbackView()
+        }
+    }
+}
+
+struct FeedbackView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var rating = 0
+    @State private var feedback = ""
+    @State private var showThanks = false
+
+    var body: some View {
+        Screen(title: "Leave a review") {
+            Card {
+                Text("How would you rate the app?")
+                HStack {
+                    ForEach(1...5, id: \.self) { star in
+                        Image(systemName: star <= rating ? "star.fill" : "star")
+                            .font(.title)
+                            .foregroundColor(.yellow)
+                            .onTapGesture { rating = star }
+                    }
+                }
+                Divider()
+                Text("Feedback")
+                TextEditor(text: $feedback)
+                    .frame(height: 140)
+                    .scrollContentBackground(.hidden)
+                    .padding(6)
+                    .background(Color(.systemGray6))
+                    .cornerRadius(8)
+            }
+
+            Button("Submit") {
+                // Nothing is sent anywhere yet - see notes below
+                showThanks = true
+            }
+            .disabled(rating == 0)
+
+            Button("Cancel", role: .cancel) { dismiss() }
+        }
+        .alert("Thanks for your feedback!", isPresented: $showThanks) {
+            Button("OK") { dismiss() }
         }
     }
 }
